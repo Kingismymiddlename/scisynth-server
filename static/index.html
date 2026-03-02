@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SciSynth — Automated Systematic Review</title>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;background:#080c12;color:#e2e8f0;font-family:'DM Sans',system-ui,sans-serif}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}
+
+    /* Nav */
+    .nav{border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 28px;display:flex;align-items:center;justify-content:space-between}
+    .nav-logo{display:flex;align-items:center;gap:12px}
+    .nav-icon{width:30px;height:30px;border-radius:7px;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);display:flex;align-items:center;justify-content:center;font-size:15px}
+    .nav-title{font-size:14px;font-weight:500;color:#f1f5f9}
+    .nav-sub{font-size:10px;color:#334155}
+    .nav-status{display:flex;align-items:center;gap:6px;font-size:10px;color:#334155;font-family:monospace}
+    .status-dot{width:6px;height:6px;border-radius:50%;background:#34d399}
+
+    /* Main */
+    .main{max-width:920px;margin:0 auto;padding:28px 20px}
+
+    /* Input */
+    .label{display:block;font-size:10px;color:#475569;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:10px}
+    .input-box{background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.07);border-radius:10px;transition:border-color 0.2s}
+    .input-box:focus-within{border-color:rgba(52,211,153,0.25)}
+    textarea{width:100%;background:transparent;border:none;outline:none;color:#e2e8f0;font-size:15px;font-family:'Crimson Pro',Georgia,serif;line-height:1.7;padding:16px 18px;resize:none;display:block}
+    .controls{display:flex;align-items:center;justify-content:space-between;margin-top:12px;flex-wrap:wrap;gap:10px}
+    .paper-btns{display:flex;align-items:center;gap:8px}
+    .paper-btn{background:transparent;color:#334155;border:1px solid rgba(255,255,255,0.06);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;transition:all 0.15s}
+    .paper-btn.active{background:rgba(52,211,153,0.12);color:#34d399;border-color:rgba(52,211,153,0.25)}
+    .run-btn{background:rgba(52,211,153,0.08);color:#34d399;border:1px solid rgba(52,211,153,0.25);border-radius:8px;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;transition:all 0.2s}
+    .run-btn:hover:not(:disabled){background:#34d399;color:#080c12;transform:translateY(-1px)}
+    .run-btn:disabled{color:#334155;border-color:rgba(255,255,255,0.05);cursor:not-allowed}
+    .spinner{width:11px;height:11px;border:1.5px solid #334155;border-top-color:#34d399;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block}
+
+    /* Error */
+    .error-box{background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:8px;padding:12px 16px;color:#fca5a5;font-size:13px;margin-bottom:20px}
+
+    /* Results grid */
+    .results{display:grid;gap:20px}
+    .results.has-synthesis{grid-template-columns:1fr 1.35fr}
+
+    /* Paper card */
+    .paper-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color 0.2s;animation:fadeIn 0.4s ease both}
+    .paper-card:hover{border-color:rgba(52,211,153,0.25)}
+    .paper-inner{display:flex;gap:10px;align-items:flex-start}
+    .paper-year{background:rgba(52,211,153,0.12);color:#34d399;border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace;white-space:nowrap;margin-top:2px;flex-shrink:0}
+    .paper-title{font-size:13px;color:#e2e8f0;font-weight:500;line-height:1.4;margin-bottom:3px}
+    .paper-meta{font-size:11px;color:#475569;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .citations-badge{background:rgba(99,102,241,0.12);color:#818cf8;border-radius:4px;padding:1px 6px;font-size:10px}
+    .pmid-link{color:#34d399;text-decoration:none;font-size:10px}
+    .paper-abstract{margin-top:10px;font-size:12px;color:#94a3b8;line-height:1.65;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px;display:none}
+    .paper-abstract.open{display:block}
+    .paper-toggle{color:#334155;font-size:10px;flex-shrink:0;margin-top:2px}
+    .section-label{font-size:10px;color:#334155;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px}
+
+    /* Synthesis */
+    .synth-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}
+    .synth-title-sub{font-size:10px;color:#475569;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:4px}
+    .synth-title{font-size:20px;color:#f1f5f9;font-family:'Crimson Pro',Georgia,serif;font-weight:600}
+    .synth-count{background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:8px 14px;text-align:center}
+    .synth-count-num{font-size:20px;color:#34d399;font-weight:700;line-height:1}
+    .synth-count-label{font-size:10px;color:#475569;margin-top:2px}
+    .card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:18px;margin-bottom:14px}
+    .card-label{font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px}
+    .card-label.green{color:#34d399} .card-label.yellow{color:#fbbf24} .card-label.grey{color:#475569}
+    .summary-text{font-size:15px;color:#cbd5e1;line-height:1.8;font-family:'Crimson Pro',Georgia,serif}
+    .finding{display:flex;gap:10px;margin-bottom:10px;align-items:flex-start}
+    .finding-dot{color:#34d399;flex-shrink:0;margin-top:3px;font-size:12px}
+    .finding-text{font-size:13px;color:#cbd5e1;line-height:1.65}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .mini-card{border-radius:10px;padding:16px}
+    .mini-card.green{background:rgba(52,211,153,0.04);border:1px solid rgba(52,211,153,0.12)}
+    .mini-card.yellow{background:rgba(251,191,36,0.04);border:1px solid rgba(251,191,36,0.12)}
+    .mini-card-text{font-size:12px;color:#94a3b8;line-height:1.7}
+    .verdict-row{display:flex;gap:8px;flex-wrap:wrap}
+    .verdict-badge{border-radius:20px;padding:6px 16px;font-size:13px;font-weight:600}
+    .conf-badge{background:rgba(255,255,255,0.04);color:#64748b;border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:6px 14px;font-size:12px}
+
+    /* Empty state */
+    .empty{text-align:center;padding:56px 20px;animation:fadeIn 0.6s ease}
+    .empty-icon{font-size:44px;margin-bottom:14px;opacity:0.2}
+    .empty-title{font-size:17px;font-family:'Crimson Pro',Georgia,serif;color:#475569;margin-bottom:6px}
+    .empty-sub{font-size:12px;color:#1e293b;margin-bottom:28px}
+    .examples{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+    .example-btn{background:transparent;border:1px solid rgba(255,255,255,0.07);color:#334155;border-radius:20px;padding:7px 14px;cursor:pointer;font-size:12px;transition:all 0.2s}
+    .example-btn:hover{color:#94a3b8;border-color:rgba(255,255,255,0.15)}
+
+    .scroll-panel{max-height:68vh;overflow-y:auto;padding-right:4px}
+
+    /* API key input */
+    .api-key-bar{background:rgba(255,193,7,0.06);border-bottom:1px solid rgba(255,193,7,0.15);padding:10px 28px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .api-key-bar input{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 12px;color:#e2e8f0;font-size:12px;font-family:monospace;flex:1;min-width:200px;outline:none}
+    .api-key-bar label{font-size:11px;color:#fbbf24;white-space:nowrap}
+    .save-btn{background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.25);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px}
+  </style>
+</head>
+<body>
+
+<!-- API Key Bar -->
+<div class="api-key-bar">
+  <label>🔑 Anthropic API Key (stored locally, never sent anywhere except Anthropic):</label>
+  <input type="password" id="apiKeyInput" placeholder="sk-ant-..." />
+  <button class="save-btn" onclick="saveKey()">Save</button>
+  <span id="keyStatus" style="font-size:11px;color:#64748b"></span>
+</div>
+
+<!-- Nav -->
+<div class="nav">
+  <div class="nav-logo">
+    <div class="nav-icon">⚗</div>
+    <div>
+      <div class="nav-title">SciSynth</div>
+      <div class="nav-sub">Automated Systematic Review · Real PubMed Data</div>
+    </div>
+  </div>
+  <div class="nav-status">
+    <span class="status-dot"></span>
+    render.com · live
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div style="margin-bottom:24px">
+    <label class="label">Research Hypothesis</label>
+    <div class="input-box">
+      <textarea id="hypothesis" rows="3" placeholder="e.g. Intermittent fasting extends healthspan in humans..."></textarea>
+    </div>
+    <div class="controls">
+      <div class="paper-btns">
+        <span style="font-size:11px;color:#334155">Papers:</span>
+        <button class="paper-btn" onclick="setPapers(10)">10</button>
+        <button class="paper-btn active" onclick="setPapers(15)">15</button>
+        <button class="paper-btn" onclick="setPapers(20)">20</button>
+        <button class="paper-btn" onclick="setPapers(25)">25</button>
+      </div>
+      <button class="run-btn" id="runBtn" onclick="runReview()">Run Review →</button>
+    </div>
+  </div>
+
+  <div id="errorBox" class="error-box" style="display:none"></div>
+
+  <div id="results" class="results" style="display:none">
+    <div>
+      <div class="section-label" id="paperCount"></div>
+      <div class="scroll-panel" id="papersList"></div>
+    </div>
+    <div class="scroll-panel" id="synthesisPanel" style="display:none"></div>
+  </div>
+
+  <div class="empty" id="emptyState">
+    <div class="empty-icon">⚗</div>
+    <div class="empty-title">Enter a hypothesis to begin</div>
+    <div class="empty-sub">Real PubMed abstracts · Citation counts · Claude synthesis · 100% free</div>
+    <div class="examples">
+      <button class="example-btn" onclick="setExample(this)">Metformin extends lifespan in non-diabetic populations</button>
+      <button class="example-btn" onclick="setExample(this)">GLP-1 agonists reduce cardiovascular events</button>
+      <button class="example-btn" onclick="setExample(this)">Sleep deprivation increases Alzheimer's risk</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let paperCount = 15;
+  let apiKey = localStorage.getItem('anthropic_key') || '';
+  if (apiKey) {
+    document.getElementById('apiKeyInput').value = apiKey;
+    document.getElementById('keyStatus').textContent = '✓ Key saved';
+  }
+
+  function saveKey() {
+    apiKey = document.getElementById('apiKeyInput').value.trim();
+    localStorage.setItem('anthropic_key', apiKey);
+    document.getElementById('keyStatus').textContent = '✓ Key saved';
+  }
+
+  function setPapers(n) {
+    paperCount = n;
+    document.querySelectorAll('.paper-btn').forEach(b => {
+      b.classList.toggle('active', b.textContent == n);
+    });
+  }
+
+  function setExample(el) {
+    document.getElementById('hypothesis').value = el.textContent;
+  }
+
+  function showError(msg) {
+    const box = document.getElementById('errorBox');
+    box.textContent = '⚠ ' + msg;
+    box.style.display = 'block';
+  }
+
+  function hideError() {
+    document.getElementById('errorBox').style.display = 'none';
+  }
+
+  function setRunning(loading, msg) {
+    const btn = document.getElementById('runBtn');
+    if (loading) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> ${msg}`;
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = 'Run Review →';
+    }
+  }
+
+  function verdictStyle(v) {
+    const map = {
+      'Supported': 'background:rgba(52,211,153,0.12);color:#34d399;border:1px solid rgba(52,211,153,0.25)',
+      'Partially Supported': 'background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.25)',
+      'Insufficient Evidence': 'background:rgba(148,163,184,0.12);color:#94a3b8;border:1px solid rgba(148,163,184,0.25)',
+      'Contradicted': 'background:rgba(239,68,68,0.12);color:#ef4444;border:1px solid rgba(239,68,68,0.25)',
+    };
+    return map[v] || map['Insufficient Evidence'];
+  }
+
+  function renderPapers(papers) {
+    document.getElementById('paperCount').textContent = `${papers.length} Real PubMed Papers`;
+    const list = document.getElementById('papersList');
+    list.innerHTML = papers.map((p, i) => `
+      <div class="paper-card" style="animation-delay:${i*0.04}s" onclick="toggleAbstract(${i})">
+        <div class="paper-inner">
+          <span class="paper-year">${p.year || '—'}</span>
+          <div style="flex:1">
+            <div class="paper-title">${p.title}</div>
+            <div class="paper-meta">
+              ${p.authors ? `<span>${p.authors}</span><span>·</span>` : ''}
+              <span>${p.journal}</span>
+              ${p.citations != null ? `<span class="citations-badge">${p.citations} citations</span>` : ''}
+              ${p.pmid ? `<a class="pmid-link" href="https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/" target="_blank" onclick="event.stopPropagation()">PMID:${p.pmid} ↗</a>` : ''}
+            </div>
+            <div class="paper-abstract" id="abstract-${i}">${p.abstract}</div>
+          </div>
+          <span class="paper-toggle" id="toggle-${i}">▼</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function toggleAbstract(i) {
+    const el = document.getElementById(`abstract-${i}`);
+    const tog = document.getElementById(`toggle-${i}`);
+    el.classList.toggle('open');
+    tog.textContent = el.classList.contains('open') ? '▲' : '▼';
+  }
+
+  function renderSynthesis(s, count) {
+    const panel = document.getElementById('synthesisPanel');
+    panel.style.display = 'block';
+    document.getElementById('results').classList.add('has-synthesis');
+    panel.innerHTML = `
+      <div style="animation:fadeIn 0.6s ease">
+        <div class="synth-header">
+          <div>
+            <div class="synth-title-sub">Synthesis Complete</div>
+            <div class="synth-title">Literature Review</div>
+          </div>
+          <div class="synth-count">
+            <div class="synth-count-num">${count}</div>
+            <div class="synth-count-label">real papers</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-label grey">Verdict</div>
+          <div class="verdict-row">
+            <span class="verdict-badge" style="${verdictStyle(s.verdict)}">${s.verdict}</span>
+            <span class="conf-badge">${s.confidence} confidence</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-label grey">Executive Summary</div>
+          <div class="summary-text">${s.summary}</div>
+        </div>
+        ${s.keyFindings?.length ? `
+        <div class="card">
+          <div class="card-label grey">Key Findings</div>
+          ${s.keyFindings.map(f => `<div class="finding"><span class="finding-dot">◆</span><span class="finding-text">${f}</span></div>`).join('')}
+        </div>` : ''}
+        <div class="two-col">
+          <div class="mini-card green">
+            <div class="card-label green">Consensus</div>
+            <div class="mini-card-text">${s.consensus}</div>
+          </div>
+          <div class="mini-card yellow">
+            <div class="card-label yellow">Research Gaps</div>
+            <div class="mini-card-text">${s.gaps}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function runReview() {
+    const hypothesis = document.getElementById('hypothesis').value.trim();
+    if (!hypothesis) return;
+    if (!apiKey) { showError('Please enter your Anthropic API key at the top.'); return; }
+
+    hideError();
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('synthesisPanel').style.display = 'none';
+    document.getElementById('results').classList.remove('has-synthesis');
+
+    try {
+      // Step 1: Fetch real papers from our server
+      setRunning(true, 'Querying PubMed database...');
+      const resp = await fetch(`/search?query=${encodeURIComponent(hypothesis)}&max_results=${paperCount}`);
+      if (!resp.ok) throw new Error('Server error fetching papers');
+      const data = await resp.json();
+      const papers = data.papers || [];
+      if (!papers.length) throw new Error('No papers found. Try a broader hypothesis.');
+
+      document.getElementById('results').style.display = 'grid';
+      renderPapers(papers);
+
+      // Step 2: Synthesize with Claude
+      setRunning(true, `Synthesizing ${papers.length} real abstracts...`);
+      const papersText = papers.map((p, i) =>
+        `[${i+1}] ${p.title} (${p.authors}, ${p.year}, ${p.journal})\nCitations: ${p.citations ?? 'N/A'}\n${p.abstract}`
+      ).join('\n\n---\n\n');
+
+      const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          system: `You are an expert biomedical literature reviewer. Synthesize the provided real PubMed abstracts.
+Return ONLY a JSON object (no markdown) with:
+{"summary":"2-3 paragraphs","keyFindings":["f1","f2","f3","f4"],"consensus":"...","gaps":"...","verdict":"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted","confidence":"Low OR Medium OR High"}`,
+          messages: [{ role: 'user', content: `Hypothesis: "${hypothesis}"\n\n${papersText}` }]
+        })
+      });
+      const claudeData = await claudeResp.json();
+      if (claudeData.error) throw new Error(claudeData.error.message);
+      const text = (claudeData.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('Could not parse synthesis.');
+      const synthesis = JSON.parse(match[0]);
+      renderSynthesis(synthesis, papers.length);
+      setRunning(false);
+
+    } catch(e) {
+      showError(e.message || 'Something went wrong.');
+      setRunning(false);
+    }
+  }
+</script>
+</body>
+</html>
