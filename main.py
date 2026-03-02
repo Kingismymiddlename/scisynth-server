@@ -2,29 +2,20 @@ import httpx
 import xml.etree.ElementTree as ET
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
-
-@app.options("/{rest_of_path:path}")
-async def preflight(rest_of_path: str):
-    return JSONResponse(content={}, headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    })
 
 @app.get("/health")
 def health():
@@ -33,7 +24,6 @@ def health():
 @app.get("/search")
 async def search(query: str, max_results: int = 15):
     async with httpx.AsyncClient(timeout=30) as client:
-
         search_resp = await client.get(
             f"{PUBMED_BASE}/esearch.fcgi",
             params={"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json", "sort": "relevance"}
@@ -48,7 +38,6 @@ async def search(query: str, max_results: int = 15):
         )
         root = ET.fromstring(fetch_resp.text)
         papers = []
-
         for article in root.findall(".//PubmedArticle"):
             pmid     = article.findtext(".//PMID") or ""
             title    = article.findtext(".//ArticleTitle") or "No title"
@@ -84,3 +73,16 @@ async def search(query: str, max_results: int = 15):
             pass
 
         return {"papers": papers}
+
+# Serve frontend — must be last
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+```
+
+### Update `requirements.txt`
+
+Add one line so it becomes:
+```
+fastapi
+uvicorn
+httpx
+aiofiles
