@@ -3,13 +3,13 @@ import xml.etree.ElementTree as ET
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -24,6 +24,7 @@ def health():
 @app.get("/search")
 async def search(query: str, max_results: int = 15):
     async with httpx.AsyncClient(timeout=30) as client:
+
         search_resp = await client.get(
             f"{PUBMED_BASE}/esearch.fcgi",
             params={"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json", "sort": "relevance"}
@@ -38,6 +39,7 @@ async def search(query: str, max_results: int = 15):
         )
         root = ET.fromstring(fetch_resp.text)
         papers = []
+
         for article in root.findall(".//PubmedArticle"):
             pmid     = article.findtext(".//PMID") or ""
             title    = article.findtext(".//ArticleTitle") or "No title"
@@ -52,7 +54,15 @@ async def search(query: str, max_results: int = 15):
                 if ln:
                     authors.append(f"{ln} {fn}".strip())
             author_str = ", ".join(authors) + (" et al." if len(author_list) > 3 else "")
-            papers.append({"pmid": pmid, "title": title, "abstract": abstract, "year": year, "journal": journal, "authors": author_str, "citations": None})
+            papers.append({
+                "pmid": pmid,
+                "title": title,
+                "abstract": abstract,
+                "year": year,
+                "journal": journal,
+                "authors": author_str,
+                "citations": None
+            })
 
         try:
             pmids = [p["pmid"] for p in papers if p["pmid"]]
@@ -74,15 +84,4 @@ async def search(query: str, max_results: int = 15):
 
         return {"papers": papers}
 
-# Serve frontend — must be last
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
-```
-
-### Update `requirements.txt`
-
-Add one line so it becomes:
-```
-fastapi
-uvicorn
-httpx
-aiofiles
