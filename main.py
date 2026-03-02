@@ -1,19 +1,33 @@
+bash
+
+cat > /mnt/user-data/outputs/main.py << 'EOF'
 import httpx
 import xml.etree.ElementTree as ET
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
+
+@app.options("/{rest_of_path:path}")
+async def preflight(rest_of_path: str):
+    return JSONResponse(content={}, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    })
 
 @app.get("/health")
 def health():
@@ -52,11 +66,11 @@ async def search(query: str, max_results: int = 15):
         papers = []
 
         for article in root.findall(".//PubmedArticle"):
-            pmid    = article.findtext(".//PMID") or ""
-            title   = article.findtext(".//ArticleTitle") or "No title"
-            abstract= article.findtext(".//AbstractText") or "No abstract available"
-            year    = article.findtext(".//PubDate/Year") or article.findtext(".//PubDate/MedlineDate") or "Unknown"
-            journal = article.findtext(".//Journal/Title") or "Unknown Journal"
+            pmid     = article.findtext(".//PMID") or ""
+            title    = article.findtext(".//ArticleTitle") or "No title"
+            abstract = article.findtext(".//AbstractText") or "No abstract available"
+            year     = article.findtext(".//PubDate/Year") or article.findtext(".//PubDate/MedlineDate") or "Unknown"
+            journal  = article.findtext(".//Journal/Title") or "Unknown Journal"
 
             author_list = article.findall(".//Author")
             authors = []
@@ -97,3 +111,5 @@ async def search(query: str, max_results: int = 15):
             pass
 
         return {"papers": papers}
+EOF
+echo "done"
