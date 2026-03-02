@@ -1,9 +1,6 @@
-bash
-
-cat > /mnt/user-data/outputs/main.py << 'EOF'
 import httpx
 import xml.etree.ElementTree as ET
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -37,30 +34,17 @@ def health():
 async def search(query: str, max_results: int = 15):
     async with httpx.AsyncClient(timeout=30) as client:
 
-        # 1. Search PubMed for paper IDs
         search_resp = await client.get(
             f"{PUBMED_BASE}/esearch.fcgi",
-            params={
-                "db": "pubmed",
-                "term": query,
-                "retmax": max_results,
-                "retmode": "json",
-                "sort": "relevance"
-            }
+            params={"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json", "sort": "relevance"}
         )
         ids = search_resp.json().get("esearchresult", {}).get("idlist", [])
         if not ids:
             return {"papers": [], "error": "No papers found"}
 
-        # 2. Fetch real abstracts from PubMed
         fetch_resp = await client.get(
             f"{PUBMED_BASE}/efetch.fcgi",
-            params={
-                "db": "pubmed",
-                "id": ",".join(ids),
-                "retmode": "xml",
-                "rettype": "abstract"
-            }
+            params={"db": "pubmed", "id": ",".join(ids), "retmode": "xml", "rettype": "abstract"}
         )
         root = ET.fromstring(fetch_resp.text)
         papers = []
@@ -71,7 +55,6 @@ async def search(query: str, max_results: int = 15):
             abstract = article.findtext(".//AbstractText") or "No abstract available"
             year     = article.findtext(".//PubDate/Year") or article.findtext(".//PubDate/MedlineDate") or "Unknown"
             journal  = article.findtext(".//Journal/Title") or "Unknown Journal"
-
             author_list = article.findall(".//Author")
             authors = []
             for a in author_list[:3]:
@@ -80,18 +63,8 @@ async def search(query: str, max_results: int = 15):
                 if ln:
                     authors.append(f"{ln} {fn}".strip())
             author_str = ", ".join(authors) + (" et al." if len(author_list) > 3 else "")
+            papers.append({"pmid": pmid, "title": title, "abstract": abstract, "year": year, "journal": journal, "authors": author_str, "citations": None})
 
-            papers.append({
-                "pmid": pmid,
-                "title": title,
-                "abstract": abstract,
-                "year": year,
-                "journal": journal,
-                "authors": author_str,
-                "citations": None
-            })
-
-        # 3. Enrich with citation counts from Semantic Scholar
         try:
             pmids = [p["pmid"] for p in papers if p["pmid"]]
             sem_resp = await client.post(
@@ -111,5 +84,3 @@ async def search(query: str, max_results: int = 15):
             pass
 
         return {"papers": papers}
-EOF
-echo "done"
