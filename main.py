@@ -24,21 +24,19 @@ app.add_middleware(
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-@app.get("/debug-key")
-def debug_key():
-    key = ANTHROPIC_API_KEY
-    if not key:
-        return {"status": "MISSING - key is empty"}
-    return {"status": "found", "starts_with": key[:10], "length": len(key)}
-```
 
-Commit → wait for redeploy → visit:
-```
-https://scisynth-server.onrender.com/debug-key
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/debug-key")
+def debug_key():
+    key = ANTHROPIC_API_KEY
+    if not key:
+        return {"status": "MISSING"}
+    return {"status": "found", "starts_with": key[:10], "length": len(key)}
 
 
 @app.get("/search")
