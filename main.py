@@ -23,20 +23,14 @@ app.add_middleware(
 
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
-
-
-@app.get("/debug-key")
-def debug_key():
-    key = ANTHROPIC_API_KEY
-    if not key:
-        return {"status": "MISSING"}
-    return {"status": "found", "starts_with": key[:10], "length": len(key)}
+    return {"status": "ok", "ai": "groq/llama-3.3-70b"}
 
 
 @app.get("/search")
@@ -104,34 +98,43 @@ class SynthesizeRequest(BaseModel):
 
 @app.post("/synthesize")
 async def synthesize(req: SynthesizeRequest):
+    if not GROQ_API_KEY:
+        return {"error": "GROQ_API_KEY not configured on server."}
+
     papers_text = "\n\n---\n\n".join([
         f"[{i+1}] {p['title']} ({p['authors']}, {p['year']}, {p['journal']})\nCitations: {p.get('citations') or 'N/A'}\n{p['abstract']}"
         for i, p in enumerate(req.papers)
     ])
 
+    prompt = f"""You are an expert biomedical literature reviewer. Synthesize these PubMed abstracts.
+
+Hypothesis: "{req.hypothesis}"
+
+Papers:
+{papers_text}
+
+Return ONLY a JSON object (no markdown, no backticks) with exactly these keys:
+{{"summary":"2-3 paragraph executive summary","keyFindings":["finding 1","finding 2","finding 3","finding 4"],"consensus":"what the literature agrees on","gaps":"key research gaps and contradictions","verdict":"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted","confidence":"Low OR Medium OR High"}}"""
+
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01"
-            },
+            GROQ_BASE,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1500,
-                "system": "You are an expert biomedical literature reviewer. Synthesize the provided real PubMed abstracts. Return ONLY a JSON object (no markdown) with: {\"summary\":\"2-3 paragraphs\",\"keyFindings\":[\"f1\",\"f2\",\"f3\",\"f4\"],\"consensus\":\"...\",\"gaps\":\"...\",\"verdict\":\"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted\",\"confidence\":\"Low OR Medium OR High\"}",
-                "messages": [{"role": "user", "content": f"Hypothesis: \"{req.hypothesis}\"\n\n{papers_text}"}]
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 1500
             }
         )
         data = resp.json()
         if "error" in data:
-            return {"error": data["error"]["message"]}
+            return {"error": data["error"].get("message", "Groq API error")}
 
-        text = "".join(b["text"] for b in data.get("content", []) if b["type"] == "text")
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         match = re.search(r'\{[\s\S]*\}', text)
         if not match:
-            return {"error": "Could not parse synthesis"}
+            return {"error": "Could not parse synthesis response"}
         return json.loads(match.group())
 
 
