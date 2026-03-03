@@ -1,10 +1,15 @@
 import os
+import re
+import json
+import httpx
+import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
-load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -20,9 +25,11 @@ PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 @app.get("/search")
 async def search(query: str, max_results: int = 15):
@@ -86,6 +93,7 @@ class SynthesizeRequest(BaseModel):
     hypothesis: str
     papers: list
 
+
 @app.post("/synthesize")
 async def synthesize(req: SynthesizeRequest):
     papers_text = "\n\n---\n\n".join([
@@ -104,9 +112,7 @@ async def synthesize(req: SynthesizeRequest):
             json={
                 "model": "claude-sonnet-4-20250514",
                 "max_tokens": 1500,
-                "system": """You are an expert biomedical literature reviewer. Synthesize the provided real PubMed abstracts.
-Return ONLY a JSON object (no markdown) with:
-{"summary":"2-3 paragraphs","keyFindings":["f1","f2","f3","f4"],"consensus":"...","gaps":"...","verdict":"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted","confidence":"Low OR Medium OR High"}""",
+                "system": "You are an expert biomedical literature reviewer. Synthesize the provided real PubMed abstracts. Return ONLY a JSON object (no markdown) with: {\"summary\":\"2-3 paragraphs\",\"keyFindings\":[\"f1\",\"f2\",\"f3\",\"f4\"],\"consensus\":\"...\",\"gaps\":\"...\",\"verdict\":\"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted\",\"confidence\":\"Low OR Medium OR High\"}",
                 "messages": [{"role": "user", "content": f"Hypothesis: \"{req.hypothesis}\"\n\n{papers_text}"}]
             }
         )
@@ -115,7 +121,6 @@ Return ONLY a JSON object (no markdown) with:
             return {"error": data["error"]["message"]}
 
         text = "".join(b["text"] for b in data.get("content", []) if b["type"] == "text")
-        import re, json
         match = re.search(r'\{[\s\S]*\}', text)
         if not match:
             return {"error": "Could not parse synthesis"}
@@ -123,5 +128,3 @@ Return ONLY a JSON object (no markdown) with:
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
-PYEOF
-echo "done"
