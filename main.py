@@ -2,8 +2,8 @@ bash
 
 rm /mnt/user-data/outputs/main.py && cat > /mnt/user-data/outputs/main.py << 'PYEOF'
 import os
-import httpx
-import xml.etree.ElementTree as ET
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
