@@ -1,8 +1,13 @@
+bash
+
+rm /mnt/user-data/outputs/main.py && cat > /mnt/user-data/outputs/main.py << 'PYEOF'
+import os
 import httpx
 import xml.etree.ElementTree as ET
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -16,6 +21,7 @@ app.add_middleware(
 
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 @app.get("/health")
 def health():
@@ -24,7 +30,6 @@ def health():
 @app.get("/search")
 async def search(query: str, max_results: int = 15):
     async with httpx.AsyncClient(timeout=30) as client:
-
         search_resp = await client.get(
             f"{PUBMED_BASE}/esearch.fcgi",
             params={"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json", "sort": "relevance"}
@@ -55,13 +60,8 @@ async def search(query: str, max_results: int = 15):
                     authors.append(f"{ln} {fn}".strip())
             author_str = ", ".join(authors) + (" et al." if len(author_list) > 3 else "")
             papers.append({
-                "pmid": pmid,
-                "title": title,
-                "abstract": abstract,
-                "year": year,
-                "journal": journal,
-                "authors": author_str,
-                "citations": None
+                "pmid": pmid, "title": title, "abstract": abstract,
+                "year": year, "journal": journal, "authors": author_str, "citations": None
             })
 
         try:
@@ -84,4 +84,47 @@ async def search(query: str, max_results: int = 15):
 
         return {"papers": papers}
 
+
+class SynthesizeRequest(BaseModel):
+    hypothesis: str
+    papers: list
+
+@app.post("/synthesize")
+async def synthesize(req: SynthesizeRequest):
+    papers_text = "\n\n---\n\n".join([
+        f"[{i+1}] {p['title']} ({p['authors']}, {p['year']}, {p['journal']})\nCitations: {p.get('citations') or 'N/A'}\n{p['abstract']}"
+        for i, p in enumerate(req.papers)
+    ])
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1500,
+                "system": """You are an expert biomedical literature reviewer. Synthesize the provided real PubMed abstracts.
+Return ONLY a JSON object (no markdown) with:
+{"summary":"2-3 paragraphs","keyFindings":["f1","f2","f3","f4"],"consensus":"...","gaps":"...","verdict":"Supported OR Partially Supported OR Insufficient Evidence OR Contradicted","confidence":"Low OR Medium OR High"}""",
+                "messages": [{"role": "user", "content": f"Hypothesis: \"{req.hypothesis}\"\n\n{papers_text}"}]
+            }
+        )
+        data = resp.json()
+        if "error" in data:
+            return {"error": data["error"]["message"]}
+
+        text = "".join(b["text"] for b in data.get("content", []) if b["type"] == "text")
+        import re, json
+        match = re.search(r'\{[\s\S]*\}', text)
+        if not match:
+            return {"error": "Could not parse synthesis"}
+        return json.loads(match.group())
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
+PYEOF
+echo "done"
