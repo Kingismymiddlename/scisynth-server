@@ -1,6 +1,3 @@
-bash
-
-rm /mnt/user-data/outputs/main.py && cat > /mnt/user-data/outputs/main.py << 'PYEOF'
 import os
 from dotenv import load_dotenv
 load_dotenv()
