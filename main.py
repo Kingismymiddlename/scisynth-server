@@ -30,17 +30,29 @@ SEMANTIC_BASE = "https://api.semanticscholar.org/graph/v1"
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
-
-# Correct replacement for deprecated llama-3.3-70b-versatile
 GROQ_MODEL = "openai/gpt-oss-120b"
+
+
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "tool": "SciSynth",
+        "message": "Biomedical Literature Synthesizer is running.",
+        "health": "/health",
+        "search": "/search?query=KRAS%20G12C",
+        "synthesize": "/synthesize",
+    }
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
+        "tool": "SciSynth",
         "provider": "groq",
         "ai": GROQ_MODEL,
+        "groq_key_configured": bool(GROQ_API_KEY),
     }
 
 
@@ -114,15 +126,31 @@ def extract_authors(article: ET.Element, max_authors: int = 3) -> str:
     return author_str
 
 
+def clean_model_text(text: str) -> str:
+    text = (text or "").strip()
+    text = re.sub(r"^```json\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
 def parse_model_json(text: str) -> Dict[str, Any]:
     """Parse JSON from model response, with fallback for accidental extra text."""
+    text = clean_model_text(text)
+
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError("Model returned JSON, but not an object.")
     except json.JSONDecodeError:
         match = re.search(r"\{[\s\S]*\}", text)
         if not match:
             raise ValueError("Could not parse synthesis response")
-        return json.loads(match.group())
+        parsed = json.loads(match.group())
+        if not isinstance(parsed, dict):
+            raise ValueError("Parsed JSON is not an object.")
+        return parsed
 
 
 @app.get("/search")
@@ -130,8 +158,13 @@ async def search(
     query: str,
     max_results: int = Query(default=15, ge=1, le=50),
 ):
+    query = (query or "").strip()
+
+    if not query:
+        return {"papers": [], "error": "Query is required"}
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             search_resp = await client.get(
                 f"{PUBMED_BASE}/esearch.fcgi",
                 params={
@@ -183,7 +216,6 @@ async def search(
                     }
                 )
 
-            # Optional citation enrichment from Semantic Scholar
             try:
                 pmids = [p["pmid"] for p in papers if p.get("pmid")]
 
@@ -194,25 +226,24 @@ async def search(
                         json={"ids": [f"PMID:{pid}" for pid in pmids]},
                         timeout=10,
                     )
-                    sem_resp.raise_for_status()
 
-                    citation_map = {}
+                    if sem_resp.status_code == 200:
+                        citation_map = {}
 
-                    for item in sem_resp.json():
-                        if not item:
-                            continue
+                        for item in sem_resp.json():
+                            if not item:
+                                continue
 
-                        external_ids = item.get("externalIds") or {}
-                        pubmed_id = str(external_ids.get("PubMed", ""))
+                            external_ids = item.get("externalIds") or {}
+                            pubmed_id = str(external_ids.get("PubMed", ""))
 
-                        if pubmed_id:
-                            citation_map[pubmed_id] = item.get("citationCount", 0)
+                            if pubmed_id:
+                                citation_map[pubmed_id] = item.get("citationCount", 0)
 
-                    for paper in papers:
-                        paper["citations"] = citation_map.get(paper["pmid"])
+                        for paper in papers:
+                            paper["citations"] = citation_map.get(paper["pmid"])
 
             except Exception:
-                # Citation enrichment is optional, so search should still succeed.
                 pass
 
             return {"papers": papers}
@@ -223,7 +254,7 @@ async def search(
         return {
             "papers": [],
             "error": f"External API HTTP error: {e.response.status_code}",
-            "details": e.response.text,
+            "details": e.response.text[:500],
         }
     except Exception as e:
         return {"papers": [], "error": f"Search failed: {str(e)}"}
@@ -244,13 +275,8 @@ class SynthesizeRequest(BaseModel):
     papers: List[Paper]
 
 
-@app.post("/synthesize")
-async def synthesize(req: SynthesizeRequest):
-    if not GROQ_API_KEY:
-        return {"error": "GROQ_API_KEY not configured on server."}
-
-    if not req.papers:
-        return {"error": "No papers provided for synthesis."}
+def build_prompt(req: SynthesizeRequest) -> str:
+    usable_papers = req.papers[:20]
 
     papers_text = "\n\n---\n\n".join(
         [
@@ -259,9 +285,9 @@ async def synthesize(req: SynthesizeRequest):
                 f"({paper.authors}, {paper.year}, {paper.journal})\n"
                 f"PMID: {paper.pmid or 'N/A'}\n"
                 f"Citations: {paper.citations if paper.citations is not None else 'N/A'}\n"
-                f"{paper.abstract}"
+                f"{(paper.abstract or 'No abstract available')[:2500]}"
             )
-            for i, paper in enumerate(req.papers)
+            for i, paper in enumerate(usable_papers)
         ]
     )
 
@@ -283,65 +309,111 @@ Return ONLY a valid JSON object with exactly these keys:
   "confidence": "Low OR Medium OR High"
 }}
 
-Do not include markdown.
-Do not include backticks.
-Do not include any text before or after the JSON object.
+Rules:
+- Do not include markdown.
+- Do not include backticks.
+- Do not include any text before or after the JSON object.
+- If evidence is weak, say Insufficient Evidence.
+- Do not invent trial results or clinical claims not supported by the abstracts.
 """.strip()
 
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                GROQ_BASE,
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": prompt,
-                        }
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 1500,
-                    "response_format": {"type": "json_object"},
-                },
-            )
-            resp.raise_for_status()
+    return prompt
 
-            data = resp.json()
 
-            if "error" in data:
-                return {
-                    "error": data["error"].get("message", "Groq API error")
-                }
+async def call_groq(prompt: str, use_json_mode: bool = True) -> Dict[str, Any]:
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strict JSON API for biomedical literature synthesis. "
+                    "Return only a valid raw JSON object."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1800,
+    }
 
-            text = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
+    if use_json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
-            if not text:
-                return {"error": "Empty synthesis response from model."}
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        resp = await client.post(
+            GROQ_BASE,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
 
+        if resp.status_code >= 400:
+            return {
+                "error": f"Groq API HTTP error: {resp.status_code}",
+                "details": resp.text[:500],
+                "_status_code": resp.status_code,
+            }
+
+        data = resp.json()
+
+        if "error" in data:
+            return {
+                "error": data["error"].get("message", "Groq API error"),
+                "details": json.dumps(data["error"])[:500],
+            }
+
+        text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+
+        if not text:
+            return {"error": "Empty synthesis response from model."}
+
+        try:
             return parse_model_json(text)
+        except Exception as e:
+            return {
+                "error": f"Model returned invalid JSON: {str(e)}",
+                "raw_response": text[:500],
+            }
 
-    except httpx.HTTPStatusError as e:
-        return {
-            "error": f"Groq API HTTP error: {e.response.status_code}",
-            "details": e.response.text,
-        }
-    except json.JSONDecodeError:
-        return {"error": "Model returned invalid JSON."}
+
+@app.post("/synthesize")
+async def synthesize(req: SynthesizeRequest):
+    if not GROQ_API_KEY:
+        return {"error": "GROQ_API_KEY not configured on server."}
+
+    if not req.papers:
+        return {"error": "No papers provided for synthesis."}
+
+    prompt = build_prompt(req)
+
+    try:
+        result = await call_groq(prompt, use_json_mode=True)
+
+        if (
+            isinstance(result, dict)
+            and result.get("error")
+            and result.get("_status_code") in {400, 422}
+        ):
+            fallback = await call_groq(prompt, use_json_mode=False)
+            if not fallback.get("error"):
+                return fallback
+
+        return result
+
     except Exception as e:
         return {"error": f"Synthesis failed: {str(e)}"}
 
 
-# Mount static frontend only if the folder exists.
-# This prevents deployment crash when static/ is missing.
 static_dir = Path("static")
 if static_dir.exists() and static_dir.is_dir():
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
