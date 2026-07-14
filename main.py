@@ -3,20 +3,18 @@ import re
 import json
 import httpx
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 
 load_dotenv()
 
-app = FastAPI(title="Biomedical Literature Synthesizer")
+app = FastAPI(title="SciSynth - Biomedical Literature Synthesizer")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,7 +40,7 @@ def root():
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SciSynth — Biomedical Literature Synthesizer</title>
+  <title>SciSynth - Biomedical Literature Synthesizer</title>
   <style>
     :root {
       --bg: #070b08;
@@ -157,7 +155,8 @@ def root():
     }
 
     .hero-card,
-    .panel {
+    .panel,
+    .result-card {
       background: rgba(16, 23, 17, 0.88);
       border: 1px solid var(--border);
       border-radius: 22px;
@@ -167,6 +166,10 @@ def root():
 
     .hero-card {
       padding: 34px;
+    }
+
+    .panel {
+      padding: 24px;
     }
 
     .eyebrow {
@@ -225,10 +228,6 @@ def root():
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-    }
-
-    .panel {
-      padding: 24px;
     }
 
     .panel-title {
@@ -368,11 +367,7 @@ def root():
     }
 
     .result-card {
-      background: rgba(16, 23, 17, 0.9);
-      border: 1px solid var(--border);
-      border-radius: 20px;
       padding: 22px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.26);
     }
 
     .result-head {
@@ -574,7 +569,7 @@ def root():
         <div class="mark"></div>
         <div class="brand-title">Sci<span>Synth</span></div>
       </div>
-      <div class="pill" id="health-pill">Checking server…</div>
+      <div class="pill" id="health-pill">Checking server...</div>
     </nav>
 
     <section class="hero">
@@ -616,10 +611,9 @@ def root():
           <div>
             <label for="maxResults">Max papers</label>
             <select id="maxResults">
-              <option value="8">8</option>
-              <option value="12" selected>12</option>
-              <option value="15">15</option>
-              <option value="20">20</option>
+              <option value="5">5</option>
+              <option value="8" selected>8</option>
+              <option value="10">10</option>
             </select>
           </div>
         </div>
@@ -627,7 +621,7 @@ def root():
         <div class="examples">
           <span class="chip" onclick="setExample('KRAS G12C drives non-small cell lung cancer progression')">KRAS G12C / NSCLC</span>
           <span class="chip" onclick="setExample('GLP-1 receptor agonists reduce cardiovascular mortality')">GLP-1 / CV mortality</span>
-          <span class="chip" onclick="setExample('PD-L1 expression predicts response to immune checkpoint inhibitors')">PD-L1 / immunotherapy</span>
+          <span class="chip" onclick="setExample('Coffee causes cancer')">Coffee / cancer</span>
         </div>
 
         <div class="btn-row">
@@ -644,7 +638,7 @@ def root():
 
     <div class="foot">
       Research use only. Not medical advice. Not a substitute for scientific, clinical, regulatory, or legal review.<br/>
-      API endpoints: /health · /search · /synthesize
+      API endpoints: /health - /search - /synthesize
     </div>
   </main>
 
@@ -654,12 +648,6 @@ def root():
 
     const $ = (id) => document.getElementById(id);
 
-    function setStatus(text, loading = false) {
-      $("status").innerHTML = loading
-        ? '<span class="loading"><span class="dot"></span>' + escapeHTML(text) + '</span>'
-        : escapeHTML(text || "");
-    }
-
     function escapeHTML(value) {
       return String(value || "")
         .replaceAll("&", "&amp;")
@@ -667,6 +655,12 @@ def root():
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function setStatus(text, loading = false) {
+      $("status").innerHTML = loading
+        ? '<span class="loading"><span class="dot"></span>' + escapeHTML(text) + '</span>'
+        : escapeHTML(text || "");
     }
 
     function verdictClass(verdict) {
@@ -681,8 +675,8 @@ def root():
         const response = await fetch("/health");
         const data = await response.json();
         $("health-pill").textContent = data.groq_key_configured
-          ? "Server ready · Groq configured"
-          : "Server ready · Groq key missing";
+          ? "Server ready - Groq configured"
+          : "Server ready - Groq key missing";
         $("health-pill").style.color = data.groq_key_configured ? "var(--green)" : "var(--amber)";
       } catch (e) {
         $("health-pill").textContent = "Server check failed";
@@ -725,7 +719,7 @@ def root():
     async function getPapers() {
       const hypothesis = $("hypothesis").value.trim();
       const query = $("query").value.trim() || hypothesis;
-      const maxResults = $("maxResults").value || "12";
+      const maxResults = $("maxResults").value || "8";
 
       if (!query) {
         throw new Error("Please enter a hypothesis or search query.");
@@ -742,9 +736,21 @@ def root():
       return data.papers || [];
     }
 
+    function compactPapersForAI(papers) {
+      return (papers || []).slice(0, 8).map((paper) => ({
+        pmid: paper.pmid || "",
+        title: paper.title || "No title",
+        abstract: String(paper.abstract || "No abstract available").slice(0, 900),
+        year: paper.year || "Unknown",
+        journal: paper.journal || "Unknown Journal",
+        authors: paper.authors || "Unknown authors",
+        citations: paper.citations ?? null
+      }));
+    }
+
     async function searchOnly() {
       $("runBtn").disabled = true;
-      setStatus("Searching PubMed…", true);
+      setStatus("Searching PubMed...", true);
 
       try {
         const papers = await getPapers();
@@ -776,7 +782,7 @@ def root():
       }
 
       $("runBtn").disabled = true;
-      setStatus("Searching PubMed…", true);
+      setStatus("Searching PubMed...", true);
 
       try {
         const papers = await getPapers();
@@ -789,7 +795,7 @@ def root():
         }
 
         $("results").innerHTML = renderPapers(papers);
-        setStatus("Synthesizing evidence with GPT-OSS-120B…", true);
+        setStatus("Synthesizing evidence with GPT-OSS-120B...", true);
 
         const synthesis = await fetchJSON("/synthesize", {
           method: "POST",
@@ -798,17 +804,17 @@ def root():
           },
           body: JSON.stringify({
             hypothesis,
-            papers,
+            papers: compactPapersForAI(papers),
           }),
         });
 
         if (synthesis.error) {
-          throw new Error(synthesis.error + (synthesis.details ? " — " + synthesis.details : ""));
+          throw new Error(synthesis.error + (synthesis.details ? " - " + synthesis.details : ""));
         }
 
         lastSynthesis = synthesis;
         $("results").innerHTML = renderSynthesis(synthesis, hypothesis) + renderPapers(papers);
-        setStatus("Done. Synthesized " + papers.length + " paper(s).");
+        setStatus("Done. Synthesized top " + Math.min(papers.length, 8) + " paper(s).");
       } catch (e) {
         $("results").innerHTML = '<div class="error">' + escapeHTML(e.message) + '</div>' + $("results").innerHTML;
         setStatus("Synthesis failed.");
@@ -828,7 +834,7 @@ def root():
               <div class="result-title">SciSynth Evidence Verdict</div>
               <div class="meta">Hypothesis: ${escapeHTML(hypothesis)}</div>
             </div>
-            <span class="badge ${badgeClass}">${escapeHTML(data.verdict || "Unknown")} · ${escapeHTML(data.confidence || "Medium")}</span>
+            <span class="badge ${badgeClass}">${escapeHTML(data.verdict || "Unknown")} - ${escapeHTML(data.confidence || "Medium")}</span>
           </div>
 
           <div class="summary">${escapeHTML(data.summary || "No summary returned.")}</div>
@@ -886,13 +892,13 @@ def root():
                   [${index + 1}] ${escapeHTML(paper.title || "No title")}
                 </a>
                 <div class="meta">
-                  ${escapeHTML(paper.authors || "Unknown authors")} ·
-                  ${escapeHTML(paper.year || "Unknown")} ·
-                  ${escapeHTML(paper.journal || "Unknown Journal")} ·
-                  PMID: ${escapeHTML(pmid || "N/A")} ·
+                  ${escapeHTML(paper.authors || "Unknown authors")} -
+                  ${escapeHTML(paper.year || "Unknown")} -
+                  ${escapeHTML(paper.journal || "Unknown Journal")} -
+                  PMID: ${escapeHTML(pmid || "N/A")} -
                   Citations: ${paper.citations === null || paper.citations === undefined ? "N/A" : escapeHTML(paper.citations)}
                 </div>
-                <div class="abstract">${escapeHTML(abstract.slice(0, 600))}${abstract.length > 600 ? "…" : ""}</div>
+                <div class="abstract">${escapeHTML(abstract.slice(0, 600))}${abstract.length > 600 ? "..." : ""}</div>
               </div>
             `;
           }).join("")}
@@ -955,7 +961,6 @@ def health():
 
 
 def get_all_text(element: Optional[ET.Element], default: str = "") -> str:
-    """Safely extract text including nested XML tags."""
     if element is None:
         return default
 
@@ -964,12 +969,10 @@ def get_all_text(element: Optional[ET.Element], default: str = "") -> str:
 
 
 def get_first_text(article: ET.Element, path: str, default: str = "") -> str:
-    """Find first matching XML element and return clean text."""
     return get_all_text(article.find(path), default)
 
 
 def extract_abstract(article: ET.Element) -> str:
-    """PubMed abstracts may have multiple AbstractText sections."""
     abstract_parts = []
 
     for node in article.findall(".//Abstract/AbstractText"):
@@ -1033,7 +1036,6 @@ def clean_model_text(text: str) -> str:
 
 
 def parse_model_json(text: str) -> Dict[str, Any]:
-    """Parse JSON from model response, with fallback for accidental extra text."""
     text = clean_model_text(text)
 
     try:
@@ -1045,16 +1047,18 @@ def parse_model_json(text: str) -> Dict[str, Any]:
         match = re.search(r"\{[\s\S]*\}", text)
         if not match:
             raise ValueError("Could not parse synthesis response")
+
         parsed = json.loads(match.group())
         if not isinstance(parsed, dict):
             raise ValueError("Parsed JSON is not an object.")
+
         return parsed
 
 
 @app.get("/search")
 async def search(
     query: str,
-    max_results: int = Query(default=15, ge=1, le=50),
+    max_results: int = Query(default=8, ge=1, le=20),
 ):
     query = (query or "").strip()
 
@@ -1174,7 +1178,7 @@ class SynthesizeRequest(BaseModel):
 
 
 def build_prompt(req: SynthesizeRequest) -> str:
-    usable_papers = req.papers[:20]
+    usable_papers = req.papers[:8]
 
     papers_text = "\n\n---\n\n".join(
         [
@@ -1183,7 +1187,7 @@ def build_prompt(req: SynthesizeRequest) -> str:
                 f"({paper.authors}, {paper.year}, {paper.journal})\n"
                 f"PMID: {paper.pmid or 'N/A'}\n"
                 f"Citations: {paper.citations if paper.citations is not None else 'N/A'}\n"
-                f"{(paper.abstract or 'No abstract available')[:2500]}"
+                f"{(paper.abstract or 'No abstract available')[:900]}"
             )
             for i, paper in enumerate(usable_papers)
         ]
@@ -1199,7 +1203,7 @@ Papers:
 
 Return ONLY a valid JSON object with exactly these keys:
 {{
-  "summary": "2-3 paragraph executive summary",
+  "summary": "short 1 paragraph executive summary",
   "keyFindings": ["finding 1", "finding 2", "finding 3", "finding 4"],
   "consensus": "what the literature agrees on",
   "gaps": "key research gaps and contradictions",
@@ -1235,7 +1239,7 @@ async def call_groq(prompt: str, use_json_mode: bool = True) -> Dict[str, Any]:
             },
         ],
         "temperature": 0.3,
-        "max_tokens": 1800,
+        "max_tokens": 1000,
     }
 
     if use_json_mode:
@@ -1310,8 +1314,3 @@ async def synthesize(req: SynthesizeRequest):
 
     except Exception as e:
         return {"error": f"Synthesis failed: {str(e)}"}
-
-
-static_dir = Path("static")
-if static_dir.exists() and static_dir.is_dir():
-    app.mount("/static", StaticFiles(directory="static", html=True), name="static")
